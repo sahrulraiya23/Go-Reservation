@@ -1,0 +1,70 @@
+
+    public function add_booking(Request $request, $id)
+    {
+        // Validasi input
+        $request->validate([
+            'name' => 'required',
+            'email' => 'required|email',
+            'phone' => 'required',
+            'date' => 'required|date',
+            'start' => 'required|date_format:H:i',
+            'end' => 'required|date_format:H:i|after:start',
+        ]);
+
+        // Ambil harga lapangan dari tabel lapangans
+        $field = \App\Models\Lapangan::find($id);
+        if (!$field) {
+            return redirect()->back()->with('error', 'Lapangan tidak ditemukan.');
+        }
+        $price = $field->price; // Harga lapangan
+
+        // Cek ketersediaan lapangan
+        $start = $request->start;
+        $end = $request->end;
+        $isBooked = Booking::where('field_id', $id)
+            ->where('date', $request->date)
+            ->where(function ($query) use ($start, $end) {
+                $query->where('start', '<', $end)
+                    ->where('end', '>', $start);
+            })
+            ->exists();
+
+        if ($isBooked) {
+            return redirect()->back()->with('message', 'Lapangan sudah dipesan, coba pada waktu lain.');
+        }
+
+        // Simpan data booking
+        $data = new Booking();
+        $data->field_id = $id;
+        $data->name = $request->name;
+        $data->email = $request->email;
+        $data->phone = $request->phone;
+        $data->date = $request->date;
+        $data->start = $start;
+        $data->end = $end;
+        $data->save();
+
+        // Konfigurasi Midtrans
+        \Midtrans\Config::$serverKey = config('midtrans.serverKey');
+        \Midtrans\Config::$isProduction = false;
+        \Midtrans\Config::$isSanitized = true;
+        \Midtrans\Config::$is3ds = true;
+
+        // Parameter pembayaran
+        $params = [
+            'transaction_details' => [
+                'order_id' => 'BOOKING-' . $data->id,
+                'gross_amount' => $price, // Harga diambil dari tabel lapangans
+            ],
+            'customer_details' => [
+                'first_name' => $data->name,
+                'email' => $data->email,
+                'phone' => $data->phone,
+            ],
+        ];
+        $snapToken = \Midtrans\Snap::getSnapToken($params);
+        $transaction->snap_token = $snapToken;
+        $transaction->save();
+
+        return
+    }
